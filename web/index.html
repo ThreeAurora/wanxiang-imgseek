@@ -5,21 +5,29 @@
 <title>万象图搜</title>
 <style>
 :root{
-  --bg:#1b1b1f; --bg2:#222228; --fg:#d6d6dc; --dim:#8a8a94;
+  --bg:#1b1b1f; --bg2:#222228; --panel:#202026; --fg:#d6d6dc; --dim:#8a8a94;
   --accent:#4f9cf9; --sem:#3f8ef7; --ocr:#3aa76d; --line:#303038;
+  --warn:#e0a34a; --bad:#e06c5a;
 }
 *{box-sizing:border-box; margin:0;}
 html,body{height:100%; overflow:hidden;}
 body{background:var(--bg); color:var(--fg);
      font:13px/1.45 "Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
      display:flex; flex-direction:column;}
-header{display:flex; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); background:var(--bg2);}
+/* ---- 顶栏 ---- */
+header{display:flex; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); background:var(--bg2); align-items:center;}
+.tabs{display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden;}
+.tabs button{background:transparent; color:var(--dim); border:none; padding:7px 14px; cursor:pointer; font-size:13px;}
+.tabs button.on{background:var(--accent); color:#fff;}
 #q{flex:1; font-size:15px; padding:7px 10px; background:#141418; color:var(--fg);
    border:1px solid var(--line); border-radius:6px; outline:none;}
 #q:focus{border-color:var(--accent);}
 select,.btn{background:#141418; color:var(--fg); border:1px solid var(--line);
-   border-radius:6px; padding:7px 10px; cursor:pointer; outline:none;}
+   border-radius:6px; padding:7px 10px; cursor:pointer; outline:none; font-size:13px;}
 .btn:hover{border-color:var(--accent);}
+.btn.warn{color:var(--warn); border-color:var(--warn);}
+.btn.danger{color:var(--bad); border-color:#5a3a36;}
+/* ---- 搜索视图 ---- */
 #thead{display:flex; padding:4px 10px; gap:8px; border-bottom:1px solid var(--line);
        color:var(--dim); font-size:12px; user-select:none; background:var(--bg2);}
 #thead span{cursor:pointer;} #thead span:hover{color:var(--fg);}
@@ -44,32 +52,117 @@ select,.btn{background:#141418; color:var(--fg); border:1px solid var(--line);
 .bdg.name{background:rgba(200,200,210,.12); color:#b9b9c2;}
 .cell-sz{flex:none; width:72px; text-align:right; color:var(--dim); font-size:12px;}
 .cell-dt{flex:none; width:88px; color:var(--dim); font-size:12px;}
+#empty{padding:40px; text-align:center; color:var(--dim);}
+/* ---- 管理视图 ---- */
+#manage{flex:1; overflow-y:auto; padding:14px; display:none;}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:8px;
+       padding:12px 14px; margin-bottom:14px;}
+.panel h3{font-size:13px; color:var(--dim); font-weight:600; margin-bottom:10px;
+          letter-spacing:.05em;}
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{text-align:left; color:var(--dim); font-weight:500; padding:4px 8px;
+   border-bottom:1px solid var(--line); font-size:12px;}
+td{padding:6px 8px; border-bottom:1px solid #26262d;}
+tr:last-child td{border-bottom:none;}
+.pill{display:inline-block; padding:1px 8px; border-radius:9px; font-size:11.5px;
+      background:#141419; border:1px solid var(--line);}
+.pill.ok{color:#67c894; border-color:#2b4a3b;}
+.pill.pend{color:#e8c268; border-color:#57472a;}
+.pill.off{color:#777;}
+.addrow{display:flex; gap:8px; margin-top:10px;}
+.addrow input{flex:1; background:#141418; color:var(--fg); border:1px solid var(--line);
+              border-radius:6px; padding:7px 10px; outline:none;}
+.bar{height:8px; background:#141418; border-radius:4px; overflow:hidden; flex:1;}
+.bar>i{display:block; height:100%; background:var(--accent); border-radius:4px;
+      transition:width .4s;}
+.stage{display:flex; align-items:center; gap:10px; margin:7px 0; font-size:12.5px;}
+.stage .lb{width:150px; color:var(--dim); flex:none;}
+.stage .num{width:130px; text-align:right; color:var(--dim); flex:none; font-size:12px;}
+.kv{display:flex; flex-wrap:wrap; gap:8px 22px; font-size:12.5px; color:var(--dim);}
+.kv b{color:var(--fg); font-weight:600;}
+#folderRows tr[draggable]{cursor:default;}
+#folderRows .drag{cursor:grab; color:var(--dim); text-align:center;}
+#folderRows .dragging{opacity:.35;}
+#folderRows input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
+.mrow{display:flex; align-items:center; gap:10px; padding:6px 0; font-size:13px;}
+.mrow .st{font-size:11.5px; padding:1px 8px; border-radius:9px;}
+.st.ready{background:rgba(58,167,109,.16); color:#67c894;}
+.st.loading{background:rgba(232,194,104,.15); color:#e8c268;}
+.st.error{background:rgba(224,108,90,.16); color:#e88a78;}
+.st.unloaded{background:#141419; color:#777;}
 footer{display:flex; justify-content:space-between; padding:5px 10px;
        border-top:1px solid var(--line); background:var(--bg2); color:var(--dim); font-size:12px;}
-#empty{padding:40px; text-align:center; color:var(--dim);}
+.hidden{display:none !important;}
 </style>
 </head>
 <body>
 <header>
-  <input id="q" placeholder="搜索文件名 / 图中文字 / 语义描述…" autofocus>
-  <select id="model" title="语义模型"></select>
-  <select id="sort">
-    <option value="relevance">综合排序</option>
-    <option value="name">名称</option>
-    <option value="mtime">修改时间</option>
-    <option value="size">大小</option>
-  </select>
-  <button class="btn" id="btnFolder" title="添加监视目录">+目录</button>
-  <button class="btn" id="btnScan" title="重新扫描全部目录">扫描</button>
+  <div class="tabs">
+    <button id="tabSearch" class="on">搜索</button>
+    <button id="tabManage">索引管理</button>
+  </div>
+  <span id="searchTools" style="display:flex; gap:8px; flex:1; align-items:center;">
+    <input id="q" placeholder="搜索文件名 / 图中文字 / 语义描述…" autofocus>
+    <select id="model" title="语义模型"></select>
+    <select id="sort">
+      <option value="relevance">综合排序</option>
+      <option value="name">名称</option>
+      <option value="mtime">修改时间</option>
+      <option value="size">大小</option>
+    </select>
+    <button class="btn" id="btnScan" title="重新扫描全部目录">扫描</button>
+  </span>
 </header>
-<div id="thead">
-  <span style="width:56px"></span>
-  <span style="flex:1" data-sort="name">名称</span>
-  <span class="badges" style="cursor:default">匹配来源</span>
-  <span class="cell-sz" data-sort="size">大小</span>
-  <span class="cell-dt" data-sort="mtime">修改时间</span>
+
+<!-- ============ 搜索视图 ============ -->
+<div id="viewSearch" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+  <div id="thead">
+    <span style="width:56px"></span>
+    <span style="flex:1" data-sort="name">名称</span>
+    <span class="badges" style="cursor:default">匹配来源</span>
+    <span class="cell-sz" data-sort="size">大小</span>
+    <span class="cell-dt" data-sort="mtime">修改时间</span>
+  </div>
+  <div id="grid"><div id="spacer"><div id="empty"></div></div></div>
 </div>
-<div id="grid"><div id="spacer"><div id="empty"></div></div></div>
+
+<!-- ============ 索引管理视图 ============ -->
+<div id="manage">
+  <div class="panel">
+    <h3>流水线控制</h3>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button class="btn warn" id="btnPause">⏸ 暂停索引</button>
+      <button class="btn" id="btnRescan">重新扫描目录变更</button>
+      <button class="btn" id="btnRetryOcr">重试失败项 (OCR)</button>
+      <button class="btn danger" id="btnUnload">释放模型与常驻内存</button>
+    </div>
+    <div class="stage"><span class="lb">缩略图 / 解码</span><div class="bar"><i id="barThumb"></i></div><span class="num" id="numThumb"></span></div>
+    <div class="stage"><span class="lb">OCR 文字识别</span><div class="bar"><i id="barOcr"></i></div><span class="num" id="numOcr"></span></div>
+    <div class="stage"><span class="lb" id="lbEmbed">语义向量嵌入</span><div class="bar"><i id="barEmbed"></i></div><span class="num" id="numEmbed"></span></div>
+    <div class="kv" style="margin-top:10px;">
+      <span>总量 <b id="kvTotal">-</b></span>
+      <span>速率 <b id="kvRate">-</b></span>
+      <span>OCR 后端 <b id="kvBackend">-</b></span>
+      <span>状态 <b id="kvState">-</b></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>监视目录（拖动行可调整顺序；关闭开关后该目录内容不再出现在搜索结果）</h3>
+    <table><thead><tr><th style="width:28px"></th><th>路径</th><th style="width:80px">共几张</th><th style="width:210px">已处理 / 待处理</th><th style="width:56px">启用</th><th style="width:80px">操作</th></tr></thead>
+    <tbody id="folderRows"></tbody></table>
+    <div class="addrow">
+      <input id="newFolder" placeholder="输入新的监视目录绝对路径，如 G:\Photos">
+      <button class="btn" id="btnAddFolder">+ 添加目录并扫描</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>语义模型（每个模型独立向量空间，可随时切换对比）</h3>
+    <div id="modelList"></div>
+  </div>
+</div>
+
 <footer><span id="hit"></span><span id="idx"></span></footer>
 
 <script>
@@ -78,7 +171,19 @@ const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const ROWH=64, BUF=8;
 const S={q:"",sort:"relevance",items:[],total:0,truncated:false,seq:0,ctrl:null,sel:-1};
 const grid=$("#grid"), spacer=$("#spacer");
-let pool=[];
+let pool=[], view="search";
+
+/* ---------- 视图切换 ---------- */
+function setView(v){
+  view=v;
+  $("#viewSearch").classList.toggle("hidden", v!=="search");
+  $("#manage").classList.toggle("hidden", v!=="manage");
+  $("#tabSearch").classList.toggle("on", v==="search");
+  $("#tabManage").classList.toggle("on", v==="manage");
+  $("#searchTools").style.display = v==="search" ? "flex":"none";
+}
+$("#tabSearch").onclick=()=>setView("search");
+$("#tabManage").onclick=()=>{setView("manage"); renderManage();};
 
 /* ---------- 搜索 ---------- */
 const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)};};
@@ -93,15 +198,16 @@ async function fetchSearch(){
     S.items=d.results; S.total=d.total; S.truncated=d.truncated; S.sel=-1;
     spacer.style.height=(S.items.length*ROWH)+"px";
     $("#empty").style.display=S.items.length?"none":"block";
-    $("#empty").textContent=S.q?`没有匹配「${S.q}」的结果`:"输入关键词，或点右上「扫描」建立索引";
+    $("#empty").textContent=S.q?`没有匹配「${S.q}」的结果`:"输入关键词搜索；到「索引管理」添加目录建立索引";
     render(true);
-    $("#hit").textContent=`共 ${S.total} 条命中 · ${d.elapsed_ms} ms`+(S.truncated?"（已截断，请细化关键词）":"");
+    $("#hit").textContent=`共 ${S.total} 条命中 · ${d.elapsed_ms} ms`+(S.truncated?"（已截断）":"");
   }catch(e){ if(e.name!=="AbortError")console.error(e); }
 }
 const searchSoon=debounce(fetchSearch,150);
 
 /* ---------- 虚拟滚动 ---------- */
 function render(force){
+  if(view!=="search")return;
   const st=grid.scrollTop, vh=grid.clientHeight;
   const a=Math.max(0,Math.floor(st/ROWH)-BUF);
   const b=Math.min(S.items.length,a+Math.ceil(vh/ROWH)+BUF*2);
@@ -134,7 +240,7 @@ function fill(el,it,idx){
     const sp=document.createElement("span");
     if(s.type==="sem"){sp.className="bdg sem";sp.textContent="语义 "+s.score.toFixed(2);}
     else if(s.type==="ocr"){sp.className="bdg ocr";sp.textContent="OCR "+(s.matched||"");}
-    else{sp.className="bdg name";sp.textContent=s.matched?"文件名":"";}
+    else{sp.className="bdg name";sp.textContent="文件名";}
     bd.appendChild(sp);
   }
   el.querySelector("img").src="/api/thumb/"+it.id;
@@ -164,23 +270,117 @@ async function openItem(id){
   try{await fetch("/api/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:+id})});}catch(e){}
 }
 
-/* ---------- 状态栏轮询 ---------- */
+/* ---------- 索引管理视图 ---------- */
+let LAST=null;
 async function pollStatus(){
   try{
-    const d=await(await fetch("/api/status")).json();
+    const d=LAST=await(await fetch("/api/status")).json();
+    /* 底栏 */
     let t=`索引: ${d.images_total} 张`;
     const ep=d.models.reduce((s,m)=>s+(m.pending_embed||0),0);
     const left=d.pending.thumb+d.pending.ocr+ep;
-    if(left>0)t+=` · 待处理 ${left} (${d.rate_per_sec} 张/s${d.scanning?" · 扫描中":""})`;
+    if(left>0)t+=` · 待处理 ${left} (${d.rate_per_sec} 张/s)`;
     else t+=" · 就绪";
     const bk=(d.failed?.thumb||0)+(d.failed?.ocr||0);
     if(bk>0)t+=` · 失败 ${bk}`;
+    if(d.paused)t=`⏸ 已暂停 · `+t;
+    else if(d.scanning)t=`扫描中 · `+t;
     if(d.ocr_backend&&d.ocr_backend!=="unloaded")t+=` · OCR:${d.ocr_backend.toUpperCase()}`;
-    const am=d.models.find(m=>m.key===d.active_model);
-    if(am&&am.session==="loading")t+=" · 模型加载中…";
     $("#idx").textContent=t;
+
+    if(view==="manage") renderPanels(d);
   }catch(e){}
 }
+function bar(pct,numEl,numTxt){
+  $(pct).style.width=Math.min(100,pct=== "#barEmbed"?100:numTxt.done/Math.max(1,numTxt.done+numTxt.todo)*100)+"%";
+}
+function setBar(barId,total,done,failed){
+  const pct=total?done/total*100:(done?100:0);
+  const el=$(barId); el.style.width=pct+"%";
+  el.style.background = failed&&!total? "var(--bad)" : (pct>=100?"var(--ocr)":"var(--accent)");
+}
+function renderPanels(d){
+  /* 流水线面板 */
+  const epActive=d.models.find(m=>m.key===d.active_model)?.pending_embed||0;
+  const t=d.images_total||1;
+  $("#barThumb").style.width=((t-d.pending.thumb)/t*100)+"%";
+  $("#barThumb").style.background="var(--accent)";
+  $("#barOcr").style.width=((t-d.pending.ocr)/t*100)+"%";
+  $("#barOcr").style.background="var(--ocr)";
+  $("#barEmbed").style.width=((t-epActive)/t*100)+"%";
+  $("#barEmbed").style.background="#9b7ef7";
+  $("#numThumb").textContent=`${t-d.pending.thumb} / ${t}`;
+  $("#numOcr").textContent=`${t-d.pending.ocr-d.failed.ocr} / ${t}`+(d.failed.ocr?` 失败${d.failed.ocr}`:"");
+  $("#numEmbed").textContent=`${t-epActive} / ${t}（${d.models.find(m=>m.key===d.active_model)?.label||"-"}）`;
+  $("#kvTotal").textContent=d.images_total+" 张";
+  $("#kvRate").textContent=d.rate_per_sec+" 张/s";
+  $("#kvBackend").textContent=(d.ocr_backend||"-").toUpperCase();
+  function left(){const e=d.models.reduce((s,m)=>s+(m.pending_embed||0),0);return d.pending.thumb+d.pending.ocr+e;}
+  $("#kvState").textContent=d.paused?"⏸ 已暂停":(d.scanning?"扫描中":(left()>0?"处理中":"就绪"));
+  $("#btnPause").textContent=d.paused?"▶ 继续索引":"⏸ 暂停索引";
+  /* 目录表：一条一行 + 拖动排序 + 启用开关 */
+  fetch("/api/folders").then(r=>r.json()).then(fd=>{
+    const tb=$("#folderRows");
+    tb.innerHTML=fd.folders.map(f=>`
+      <tr draggable="true" data-id="${f.id}" style="${f.enabled?'':'opacity:.45'}">
+        <td class="drag" title="拖动排序">⠿</td>
+        <td title="${f.path}" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.path}</td>
+        <td>${f.images}</td>
+        <td>${f.processed} / ${f.images}${f.pending?`  <span class="pill pend">${f.pending} 待处理</span>`:'  <span class="pill ok">完成</span>'}</td>
+        <td><input type="checkbox" ${f.enabled?"checked":""} onchange="toggleFolder(${f.id},this.checked)" title="关闭后搜索结果不含该目录"></td>
+        <td><button class="btn danger" onclick="delFolder(${f.id},${f.images})">删除</button></td>
+      </tr>`).join("")
+      || '<tr><td colspan="6" style="color:var(--dim)">尚未添加任何目录——在下方输入路径添加</td></tr>';
+    bindDrag(tb);
+  });
+  /* 模型列表 */
+  $("#modelList").innerHTML=d.models.map(m=>`
+    <div class="mrow"><b style="width:180px">${m.label}</b>
+    <span class="st ${m.session}">${m.session}${m.error?"："+m.error.slice(0,40):""}</span>
+    <span style="color:var(--dim);font-size:12px">待嵌入 ${m.pending_embed}</span>
+    ${m.key===d.active_model?'<span class="pill ok">当前激活</span>':
+      `<button class="btn" onclick="activateModel('${m.key}')">切换到此模型</button>`}
+    </div>`).join("");
+}
+window.toggleFolder=async(id,en)=>{
+  await postJSON(`/api/folders/${id}/toggle`,{enabled:en});
+  setTimeout(renderManage,300);
+};
+window.delFolder=async(id,n)=>{
+  if(!confirm(`确定删除这条路径吗？\n\n将从索引中移除该目录 ${n} 张图片的全部数据\n（缩略图、OCR 文字、语义向量），\n磁盘上的原照片不受影响。\n如需恢复须重新添加并等待重建索引。`))return;
+  await fetch("/api/folders/"+id,{method:"DELETE"});
+  renderManage();
+};
+function bindDrag(tb){
+  let dragId=null;
+  tb.querySelectorAll("tr[draggable]").forEach(tr=>{
+    tr.addEventListener("dragstart",()=>{dragId=+tr.dataset.id;tr.classList.add("dragging");});
+    tr.addEventListener("dragend",()=>{
+      tr.classList.remove("dragging");
+      const ids=[...tb.querySelectorAll("tr")].map(x=>+x.dataset.id);
+      postJSON("/api/folders/reorder",{ids});
+    });
+    tr.addEventListener("dragover",e=>{
+      e.preventDefault();
+      const dragging=tb.querySelector(".dragging");
+      if(!dragging||tr===dragging)return;
+      const r=tr.getBoundingClientRect();
+      const after=e.clientY>r.top+r.height/2;
+      tb.insertBefore(dragging,after?tr.nextSibling:tr);
+    });
+  });
+}
+window.delFolder=async id=>{
+  if(!confirm("移除该目录？其下所有图片将从索引中删除（原文件不受影响）。"))return;
+  await fetch("/api/folders/"+id,{method:"DELETE"});
+  renderManage();
+};
+window.activateModel=async key=>{
+  await postJSON("/api/models/activate",{key});
+  $("#hit").textContent=`模型 ${key} 加载中…完成后自动用当前关键词重搜`;
+  setTimeout(()=>{pollStatus();fetchSearch();},3000);
+};
+function renderManage(){ if(LAST)renderPanels(LAST); pollStatus(); }
 
 /* ---------- 交互绑定 ---------- */
 $("#q").addEventListener("input",e=>{S.q=e.target.value;searchSoon();});
@@ -189,11 +389,8 @@ $("#q").addEventListener("keydown",e=>{
   else if(e.key==="ArrowDown"){e.preventDefault();select(S.sel+1);}
   else if(e.key==="ArrowUp"){e.preventDefault();select(S.sel-1);}
 });
-grid.addEventListener("keydown",e=>{
-  if(e.key==="Enter"&&S.sel>=0)openItem(S.items[S.sel].id);
-});
 window.addEventListener("keydown",e=>{
-  if(document.activeElement===$("#q"))return;
+  if(view!=="search"||document.activeElement===$("#q"))return;
   if(e.key==="ArrowDown"){e.preventDefault();select(S.sel+1);}
   if(e.key==="ArrowUp"){e.preventDefault();select(S.sel-1);}
   if(e.key==="Enter"&&S.sel>=0)openItem(S.items[S.sel].id);
@@ -204,16 +401,34 @@ $("#sort").addEventListener("change",e=>{S.sort=e.target.value;fetchSearch();
   $$("#thead [data-sort]").forEach(s=>s.classList.toggle("on",s.dataset.sort===S.sort));});
 $$("#thead [data-sort]").forEach(s=>s.addEventListener("click",()=>{
   $("#sort").value=s.dataset.sort;$("#sort").dispatchEvent(new Event("change"));}));
-$("#btnScan").addEventListener("click",async()=>{await fetch("/api/scan/start",{method:"POST"});pollStatus();});
-$("#btnFolder").addEventListener("click",async()=>{
-  const p=prompt("输入要索引的文件夹绝对路径：");
+async function postJSON(u,data){
+  const r=await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+  if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.detail||("HTTP "+r.status));}
+  return r.ok;
+}
+$("#btnScan").addEventListener("click",async()=>{await postJSON("/api/scan/start");pollStatus();});
+$("#btnRescan").addEventListener("click",async()=>{await postJSON("/api/scan/start");pollStatus();});
+$("#btnAddFolder").addEventListener("click",async()=>{
+  const p=$("#newFolder").value.trim();
   if(!p)return;
-  const r=await fetch("/api/folders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:p})});
-  const d=await r.json();
-  if(!r.ok)alert(d.detail||"failed");
+  const ok=await postJSON("/api/folders",{path:p});
+  if(ok){$("#newFolder").value="";setTimeout(renderManage,500);}
+});
+$("#btnPause").addEventListener("click",async()=>{
+  const on=!(LAST&&LAST.paused);
+  await postJSON("/api/pipeline/pause",{on});
+  setTimeout(renderManage,300);
+});
+$("#btnRetryOcr").addEventListener("click",async()=>{
+  const ok=await postJSON("/api/retry",{stage:"ocr"});
+  if(ok)setTimeout(renderManage,400);
+});
+$("#btnUnload").addEventListener("click",async()=>{
+  await postJSON("/api/unload");
+  setTimeout(renderManage,400);
 });
 
-/* ---------- 模型下拉 ---------- */
+/* ---------- 启动 ---------- */
 async function loadModels(){
   const d=await(await fetch("/api/status")).json();
   const sel=$("#model"); sel.innerHTML="";
@@ -223,16 +438,10 @@ async function loadModels(){
     if(m.key===d.active_model)o.selected=true;
     sel.appendChild(o);
   }
-  sel.onchange=async()=>{
-    await fetch("/api/models/activate",{method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({key:sel.value})});
-    fetchSearch();
-  };
+  sel.onchange=()=>activateModel(sel.value);
 }
-
-loadModels().then(fetchSearch);
-setInterval(pollStatus,2000);pollStatus();
+loadModels().then(()=>{pollStatus();fetchSearch();});
+setInterval(pollStatus,2000);
 </script>
 </body>
 </html>

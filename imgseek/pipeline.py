@@ -63,6 +63,7 @@ class Pipeline:
     def __init__(self) -> None:
         self.stop_evt = threading.Event()
         self.scan_req = threading.Event()
+        self.paused = threading.Event()   # set = 暂停取新任务
         self.q: queue.Queue[Item] = queue.Queue(maxsize=config.QUEUE_MAXSIZE)
         self.rate = RateMeter()
         self.scanning = False
@@ -102,6 +103,9 @@ class Pipeline:
     def _run(self) -> None:
         while not self.stop_evt.is_set():
             try:
+                if self.paused.is_set():
+                    self.stop_evt.wait(1.0)
+                    continue
                 did = False
                 if self._scan_due():
                     self._scan_all()

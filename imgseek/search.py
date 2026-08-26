@@ -15,7 +15,13 @@ from imgseek import db
 
 log = logging.getLogger("search")
 
-_COLS = "id, path, filename, ext, size, mtime, width, height"
+_COLS = ("image.id AS id, image.path AS path, "
+         "image.filename AS filename, image.ext AS ext, "
+         "image.size AS size, image.mtime AS mtime, "
+         "image.width AS width, image.height AS height")
+
+_JOIN_ON = ("FROM image JOIN folder ON folder.id = image.folder_id "
+            "AND folder.enabled = 1 WHERE image.dead = 0")
 
 _ORDER = {
     "name": "filename COLLATE NOCASE ASC",
@@ -33,12 +39,15 @@ def _fts_rows(conn, q: str):
         return [], False
     joined = " ".join(tokens)
     if len(joined) >= 3:
-        expr = " AND ".join(f'"{t}"' for t in tokens)
+        # 注意：detail='none' 下不支持带引号的短语查询，只能用裸词 AND
+        expr = " AND ".join(tokens)
         try:
             rows = conn.execute(
                 f"SELECT {_COLS} FROM ocr_fts "
                 f"JOIN image ON image.id = ocr_fts.rowid "
-                f"WHERE ocr_fts MATCH ? AND image.dead=0 "
+                f"JOIN folder ON folder.id = image.folder_id "
+                f"AND folder.enabled = 1 "
+                f"WHERE ocr_fts MATCH ? AND image.dead = 0 "
                 f"ORDER BY bm25(ocr_fts) LIMIT ?",
                 (expr, config.SEARCH_LIMIT),
             ).fetchall()
@@ -47,8 +56,8 @@ def _fts_rows(conn, q: str):
             log.warning("fts match failed (%s), fallback to LIKE", e)
     like = f"%{joined}%"
     rows = conn.execute(
-        f"SELECT {_COLS} FROM image WHERE dead=0 AND ocr_text LIKE ? "
-        f"ORDER BY mtime DESC LIMIT ?", (like, config.SEARCH_LIMIT),
+        f"SELECT {_COLS} {_JOIN_ON} AND image.ocr_text LIKE ? "
+        f"ORDER BY image.mtime DESC LIMIT ?", (like, config.SEARCH_LIMIT),
     ).fetchall()
     return rows, len(rows) >= config.SEARCH_LIMIT
 
@@ -56,18 +65,18 @@ def _fts_rows(conn, q: str):
 def _name_rows(conn, q: str):
     like = f"%{q}%"
     rows = conn.execute(
-        f"SELECT {_COLS} FROM image WHERE dead=0 AND "
-        f"(filename LIKE ? OR path LIKE ?) "
-        f"ORDER BY filename COLLATE NOCASE ASC LIMIT ?",
+        f"SELECT {_COLS} {_JOIN_ON} AND "
+        f"(image.filename LIKE ? OR image.path LIKE ?) "
+        f"ORDER BY image.filename COLLATE NOCASE ASC LIMIT ?",
         (like, like, config.SEARCH_LIMIT),
     ).fetchall()
     return rows, len(rows) >= config.SEARCH_LIMIT
 
 
 def _vector_rows(conn, q: str, model_key: str):
-    """向量路：文本编码 -> 分块暴力余弦 -> join 元数据。
+    """向量路：文本编码 -> 常驻矩阵点积 -> join 元数据。
 
-    返回 ([(row, score)], truncated)；已按相似度降序。
+    返回 ([(row, score)], truncated)；已按相似度降序并应用阈值。
     """
     from imgseek import clip_models as cm, vectors
     if not cm.MANAGER.session_ready(model_key):
@@ -82,11 +91,16 @@ def _vector_rows(conn, q: str, model_key: str):
     placeholders = ",".join("?" * len(hits))
     rows = conn.execute(
         f"SELECT {_COLS}, vs.slot FROM image "
+        f"JOIN folder ON folder.id = image.folder_id AND folder.enabled = 1 "
         f"JOIN vector_slot vs ON vs.image_id = image.id "
-        f"WHERE vs.model_key=? AND vs.slot IN ({placeholders}) AND dead=0",
+        f"WHERE vs.model_key=? AND vs.slot IN ({placeholders}) "
+        f"AND image.dead = 0",
         [model_key, *slot_score.keys()],
     ).fetchall()
-    out = [(r, slot_score[r["slot"]]) for r in rows]
+    floor = config.SEM_MIN_SCORE.get(
+        model_key, config.SEM_MIN_SCORE_DEFAULT)
+    out = [(r, slot_score[r["slot"]]) for r in rows
+           if slot_score[r["slot"]] >= floor]
     out.sort(key=lambda x: x[1], reverse=True)
     return out, False
 
@@ -133,8 +147,8 @@ def search(q: str = "", model: str | None = None, sort: str = "relevance") -> di
             put(r, {"type": "sem", "score": round(float(score), 4)}, rank=i)
     else:
         rows = conn.execute(
-            f"SELECT {_COLS} FROM image WHERE dead=0 "
-            f"ORDER BY mtime DESC LIMIT ?", (config.SEARCH_LIMIT,)
+            f"SELECT {_COLS} {_JOIN_ON} "
+            f"ORDER BY image.mtime DESC LIMIT ?", (config.SEARCH_LIMIT,)
         ).fetchall()
         for r in rows:
             put(r, None)

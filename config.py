@@ -37,6 +37,9 @@ FTS_LIMIT = 500
 VEC_TOPK = 500
 VEC_CHUNK_ROWS = 65536      # 冷路径 memmap 分块行数
 RRF_K = 60                  # Reciprocal Rank Fusion 常数
+# 语义命中下限（余弦）：中文 CLIP 的无关基线高达 0.3-0.4，须按模型分别设
+SEM_MIN_SCORE = {"cn_clip_b16": 0.38, "clip_b32": 0.25}
+SEM_MIN_SCORE_DEFAULT = 0.30
 RESIDENT_VECTORS = True     # 向量 fp32 常驻内存（50 万条约 1GB/模型；
                             # 实测 p50 72ms vs 冷路径 ~2s，见 vectors.py）
 

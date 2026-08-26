@@ -68,7 +68,9 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(str(config.WEB_DIR / "index.html"))
+        # 开发期页面频繁更新，禁缓存避免浏览器用旧版
+        return FileResponse(str(config.WEB_DIR / "index.html"),
+                            headers={"Cache-Control": "no-cache"})
 
     # ---------- 状态 ----------
     @app.get("/api/status")
@@ -109,6 +111,7 @@ def create_app() -> FastAPI:
             "failed": failed,
             "ocr_backend": _pipeline.ocr_engine.backend,
             "scanning": _pipeline.scanning,
+            "paused": _pipeline.paused.is_set(),
             "rate_per_sec": round(_pipeline.rate.rate(), 1),
         }
 
@@ -118,9 +121,41 @@ def create_app() -> FastAPI:
 
     @app.get("/api/folders")
     def list_folders():
-        rows = db.get_conn().execute(
-            "SELECT id, path, enabled FROM folder ORDER BY id").fetchall()
+        rows = db.get_conn().execute("""
+            SELECT f.id, f.path, f.enabled, f.sort_order,
+                   COUNT(i.id) AS images,
+                   COALESCE(SUM(CASE WHEN i.thumb_status=1 AND i.dead=0
+                               THEN 1 ELSE 0 END),0) AS processed,
+                   COALESCE(SUM(CASE WHEN i.thumb_status=0 AND i.dead=0
+                               THEN 1 ELSE 0 END),0) AS pending,
+                   COALESCE(SUM(CASE WHEN i.dead=1 THEN 1 ELSE 0 END),0) AS dead
+            FROM folder f LEFT JOIN image i ON i.folder_id = f.id
+            GROUP BY f.id ORDER BY f.sort_order, f.id
+        """).fetchall()
         return {"folders": [dict(r) for r in rows]}
+
+    class ToggleIn(BaseModel):
+        enabled: bool
+
+    @app.post("/api/folders/{folder_id}/toggle")
+    def toggle_folder(folder_id: int, body: ToggleIn):
+        conn = db.get_conn()
+        conn.execute("UPDATE folder SET enabled=? WHERE id=?",
+                     (1 if body.enabled else 0, folder_id))
+        conn.commit()
+        return {"ok": True}
+
+    class ReorderIn(BaseModel):
+        ids: list[int]
+
+    @app.post("/api/folders/reorder")
+    def reorder_folders(body: ReorderIn):
+        conn = db.get_conn()
+        for order, fid in enumerate(body.ids):
+            conn.execute("UPDATE folder SET sort_order=? WHERE id=?",
+                         (order, fid))
+        conn.commit()
+        return {"ok": True}
 
     @app.post("/api/folders")
     def add_folder(body: FolderIn):
@@ -179,6 +214,17 @@ def create_app() -> FastAPI:
         _pipeline.ocr_engine.unload()
         vectors.close_all()  # 释放常驻矩阵与句柄；查询自动走冷路径
         return {"ok": True}
+
+    class PauseIn(BaseModel):
+        on: bool
+
+    @app.post("/api/pipeline/pause")
+    def pipeline_pause(body: PauseIn):
+        if body.on:
+            _pipeline.paused.set()
+        else:
+            _pipeline.paused.clear()
+        return {"ok": True, "paused": body.on}
 
     # ---------- 模型切换（P3 接管会话加载，当前持久化选择） ----------
     class ModelIn(BaseModel):

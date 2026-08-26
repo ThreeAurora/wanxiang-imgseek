@@ -17,19 +17,39 @@ log = logging.getLogger("ocr")
 _MIN_SCORE = 0.5
 
 
-def register_cuda_dll_dirs() -> int:
-    """注册 pip 安装的 nvidia-*-cu13 wheel 内的 DLL 目录，返回注册数。
+# 本机已有的 CUDA 12 工具链（配合 onnxruntime-gpu 1.20.x 使用）
+_LOCAL_CUDA_DIRS = [
+    r"E:\CUDA\bin",
+]
 
-    onnxruntime-gpu 1.28 需要 CUDA 13 + cuDNN 9；系统未装时，
-    pip wheel（nvidia-cublas-cu13 等）里的 DLL 即为运行时来源。
+
+def register_cuda_dll_dirs() -> int:
+    """注册 CUDA 运行时 DLL 目录，返回注册数。
+
+    onnxruntime-gpu 1.20.x 的 CUDA EP 需要 CUDA 12 + cuDNN 9：
+    - CUDA 12 运行时用本机已有工具链（E:\\CUDA\\bin）；
+    - cuDNN 9 / cublas 来自 pip 包 nvidia-cudnn-cu12 / nvidia-cublas-cu12。
+    注意：providers_cuda.dll 的隐式依赖走 **PATH** 搜索，
+    仅 add_dll_directory 不够（实测 error 126），两路都做。
     """
     base = Path(sysconfig.get_paths()["purelib"]) / "nvidia"
+    candidates = [Path(p) for p in _LOCAL_CUDA_DIRS]
+    candidates += [base / sub / "bin" for sub in
+                   ("cudnn", "cublas", "cuda_runtime", "cuda_nvrtc")]
     n = 0
-    for sub in ("cuda_runtime", "cublas", "cudnn", "cufft", "curand"):
-        d = base / sub / "bin"
+    found: list[str] = []
+    for d in candidates:
         if d.is_dir():
             os.add_dll_directory(str(d))
+            found.append(str(d))
             n += 1
+    if found:
+        env = os.environ.get("PATH", "")
+        parts = env.split(os.pathsep)
+        for d in reversed(found):
+            if d not in parts:
+                env = d + os.pathsep + env
+        os.environ["PATH"] = env
     return n
 
 

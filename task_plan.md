@@ -60,7 +60,7 @@
 | D7 | 项目「万象图搜」包名 imgseek | 中文路径不影响 import |
 | D8 | 端口 8747 绑 127.0.0.1 单 worker | 本机单用户 |
 | D9 | HF 权重走代理 127.0.0.1:7890 直连官方站 | hf-mirror 大文件 308 回源不可用（实测） |
-| D10 | CUDA13/cuDNN9 用 pip nvidia-*-cu13 wheel + add_dll_directory | 不动系统安装、不动 conda 大件 |
+| D10 | ~~ORT 1.28 + pip nvidia-cu13~~ → **onnxruntime-gpu 降级 1.20.1 + 本机 E:\CUDA(12.3) + pip nvidia-cudnn-cu12** | PyPI 上 cu13 的 Windows wheel 未发布（runtime/cublas 等均为 0.0.1 占位包）；cu13 pypi 直下又遇 sha256 损坏；CUDA12 路径全部现成 |
 | D11 | worker 线程绝不碰 DB，DB 写集中编排线程 | thread-local 连接未提交事务互锁教训 |
 
 ## 错误记录

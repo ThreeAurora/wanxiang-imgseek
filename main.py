@@ -28,6 +28,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="imgseek local image search")
     ap.add_argument("--port", type=int, default=config.PORT)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--pause", action="store_true",
+                    help="启动时暂停流水线（不自动续跑索引）")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -42,6 +44,10 @@ def main() -> None:
         log.info("registered %d CUDA dll dirs", n)
 
     db.init_db()
+    if args.pause:
+        from imgseek.api import _pipeline
+        _pipeline.paused.set()
+        log.info("pipeline starts PAUSED (--pause)")
     log.info("starting imgseek at http://%s:%d", config.HOST, args.port)
 
     if not args.no_browser:
