@@ -1,0 +1,230 @@
+"""FastAPI 路由与服务装配。
+
+所有阻塞型路由使用普通 def（FastAPI 自动丢线程池），
+服务绑 127.0.0.1 单 worker，面向本机单人使用。
+"""
+import hashlib
+import logging
+import os
+import threading
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel
+
+import config
+from imgseek import db, downloader, pipeline as pl, search, thumbs
+from imgseek.clip_models import MANAGER
+
+log = logging.getLogger("api")
+
+_pipeline = pl.Pipeline()
+
+
+def _load_model_async(key: str) -> None:
+    """后台完成 权重下载 -> 会话加载 -> 流水线开启嵌入。"""
+    MANAGER.set_state(key, "loading")
+    try:
+        downloader.ensure_model(key)
+        MANAGER.activate(key)
+        MANAGER.ensure_session(key)
+        _pipeline.clip_manager = MANAGER
+        _pipeline.clip_enabled = True
+        log.info("model %s activated", key)
+    except Exception as e:  # noqa: BLE001 - 状态栏如实展示错误
+        log.exception("activate model %s failed", key)
+        MANAGER.set_state(key, "error", str(e)[:300])
+
+
+def _autostart_active_model() -> None:
+    key = db.get_setting("active_model", config.DEFAULT_MODEL)
+    if key in config.MODELS and downloader.is_ready(key):
+        threading.Thread(target=_load_model_async, args=(key,),
+                         daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    _pipeline.start()
+    _autostart_active_model()
+    yield
+    try:
+        _pipeline.stop()
+    except Exception:  # noqa: BLE001 - 关停路径尽力而为
+        pass
+
+
+_IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="imgseek", lifespan=lifespan)
+
+    @app.get("/")
+    def index():
+        return FileResponse(str(config.WEB_DIR / "index.html"))
+
+    # ---------- 状态 ----------
+    @app.get("/api/status")
+    def status():
+        conn = db.get_conn()
+        total = conn.execute("SELECT COUNT(*) c FROM image").fetchone()["c"]
+        pend_thumb = conn.execute(
+            "SELECT COUNT(*) c FROM image WHERE thumb_status=0 AND dead=0"
+        ).fetchone()["c"]
+        pend_ocr = conn.execute(
+            "SELECT COUNT(*) c FROM image WHERE ocr_status=0 AND dead=0"
+        ).fetchone()["c"]
+        embed_pending = {
+            r["model_key"]: r["c"]
+            for r in conn.execute(
+                "SELECT model_key, COUNT(*) c FROM embed_status "
+                "WHERE status=0 GROUP BY model_key"
+            ).fetchall()
+        }
+        active = db.get_setting("active_model", config.DEFAULT_MODEL)
+        return {
+            "active_model": active,
+            "models": [
+                {"key": k, "label": v["label"],
+                 "session": MANAGER.states.get(k, "unloaded"),
+                 "error": MANAGER.errors.get(k, ""),
+                 "pending_embed": embed_pending.get(k, 0)}
+                for k, v in config.MODELS.items()
+            ],
+            "images_total": total,
+            "pending": {"thumb": pend_thumb, "ocr": pend_ocr},
+            "scanning": _pipeline.scanning,
+            "rate_per_sec": round(_pipeline.rate.rate(), 1),
+        }
+
+    # ---------- 监视目录管理 ----------
+    class FolderIn(BaseModel):
+        path: str
+
+    @app.get("/api/folders")
+    def list_folders():
+        rows = db.get_conn().execute(
+            "SELECT id, path, enabled FROM folder ORDER BY id").fetchall()
+        return {"folders": [dict(r) for r in rows]}
+
+    @app.post("/api/folders")
+    def add_folder(body: FolderIn):
+        path = os.path.abspath(os.path.normpath(body.path))
+        if not os.path.isdir(path):
+            raise HTTPException(400, "not a directory")
+        conn = db.get_conn()
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO folder(path) VALUES(?)", (path,))
+        conn.commit()
+        _pipeline.request_scan()
+        return {"ok": True,
+                "msg": "" if cur.rowcount else "already exists"}
+
+    @app.delete("/api/folders/{folder_id}")
+    def delete_folder(folder_id: int):
+        conn = db.get_conn()
+        conn.execute("DELETE FROM folder WHERE id=?", (folder_id,))
+        conn.commit()
+        _pipeline.request_scan()  # 触发 purge
+        return {"ok": True}
+
+    # ---------- 扫描控制 ----------
+    @app.post("/api/scan/start")
+    def scan_start():
+        _pipeline.request_scan()
+        return {"ok": True}
+
+    # ---------- 模型切换（P3 接管会话加载，当前持久化选择） ----------
+    class ModelIn(BaseModel):
+        key: str
+
+    @app.post("/api/models/activate")
+    def models_activate(body: ModelIn):
+        if body.key not in config.MODELS:
+            raise HTTPException(400, "unknown model")
+        db.set_setting("active_model", body.key)
+        MANAGER.activate(body.key)
+        if not MANAGER.session_ready(body.key):
+            threading.Thread(target=_load_model_async, args=(body.key,),
+                             daemon=True).start()
+        else:
+            _pipeline.clip_manager = MANAGER
+            _pipeline.clip_enabled = True
+        return {"ok": True}
+
+    # ---------- 搜索 ----------
+    @app.get("/api/search")
+    def do_search(q: str = "", model: str | None = None,
+                  sort: str = "relevance"):
+        return search.search(q=q, model=model, sort=sort)
+
+    # ---------- 缩略图 / 原图 / 打开 ----------
+    @app.get("/api/thumb/{image_id}")
+    def get_thumb(image_id: int):
+        row = db.get_conn().execute(
+            "SELECT id, path, content_hash FROM image WHERE id=?",
+            (image_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404)
+        h = row["content_hash"]
+        if h and thumbs.exists(h):
+            return FileResponse(str(thumbs.path_for(h)),
+                                media_type="image/webp", headers=_IMMUTABLE)
+        # 兜底：现场生成并回写 hash，下次即走缓存
+        try:
+            with open(row["path"], "rb") as fh:
+                data = fh.read()
+            h2 = h or hashlib.sha1(data).hexdigest()
+            thumbs.make_now(data, h2)
+            if not h:
+                db.get_conn().execute(
+                    "UPDATE image SET content_hash=? WHERE id=? AND "
+                    "content_hash IS NULL", (h2, image_id))
+                db.get_conn().commit()
+            return FileResponse(str(thumbs.path_for(h2)),
+                                media_type="image/webp", headers=_IMMUTABLE)
+        except Exception:  # noqa: BLE001 - 坏图出占位
+            return Response(content=thumbs.placeholder_bytes(),
+                            media_type="image/png")
+
+    @app.get("/api/file/{image_id}")
+    def get_file(image_id: int):
+        row = db.get_conn().execute(
+            "SELECT path FROM image WHERE id=?", (image_id,)).fetchone()
+        if row is None or not os.path.exists(row["path"]):
+            raise HTTPException(404)
+        return FileResponse(row["path"])
+
+    class OpenIn(BaseModel):
+        id: int
+
+    @app.post("/api/open")
+    def open_file(body: OpenIn):
+        row = db.get_conn().execute(
+            "SELECT path FROM image WHERE id=?", (body.id,)).fetchone()
+        if row is None:
+            raise HTTPException(404)
+        if not os.path.exists(row["path"]):
+            raise HTTPException(404, "file missing on disk")
+        os.startfile(row["path"])  # noqa: S606 - 本机单用户工具
+        return {"ok": True}
+
+    # ---------- 详情 ----------
+    @app.get("/api/detail/{image_id}")
+    def detail(image_id: int):
+        row = db.get_conn().execute(
+            "SELECT * FROM image WHERE id=?", (image_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404)
+        d = dict(row)
+        return d
+
+    @app.exception_handler(Exception)
+    async def json_errors(request, exc):
+        log.exception("unhandled error on %s", request.url.path)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    return app
