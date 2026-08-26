@@ -150,8 +150,8 @@ footer{display:flex; justify-content:space-between; padding:5px 10px;
   </div>
 
   <div class="panel">
-    <h3>监视目录（拖动 ⠿ 排序；「结果」开关决定该目录是否出现在搜索结果；「索引」按钮暂停/继续该目录的后台处理）</h3>
-    <table><thead><tr><th style="width:28px"></th><th>路径</th><th style="width:76px">共几张</th><th style="width:200px">已处理</th><th style="width:96px">索引</th><th style="width:70px">结果</th><th style="width:76px">操作</th></tr></thead>
+    <h3>监视目录（拖动 ⠿ 排序；「搜索结果」按钮决定该目录照片是否出现在搜索结果中；「索引」按钮暂停/继续该目录的后台处理）</h3>
+    <table><thead><tr><th style="width:28px"></th><th>路径</th><th style="width:76px">共几张</th><th style="width:200px">已处理</th><th style="width:96px">索引</th><th style="width:100px">搜索结果</th><th style="width:88px">操作</th></tr></thead>
     <tbody id="folderRows"></tbody></table>
     <div class="addrow">
       <input id="newFolder" placeholder="输入新的监视目录绝对路径，如 G:\Photos（可添加多个，一行一个自动排队索引）">
@@ -334,8 +334,10 @@ function renderPanels(d){
                ? `<button class="btn" onclick="pauseFolder(${f.id},false)">▶ 继续</button>`
                : `<button class="btn warn" onclick="pauseFolder(${f.id},true)">⏸ 暂停</button>`)
             : '<span class="pill ok">—</span>'}</td>
-        <td style="text-align:center"><input type="checkbox" ${f.enabled?"checked":""} onchange="toggleFolder(${f.id},this.checked)" title="勾选 = 该目录内容纳入搜索结果；取消 = 从搜索结果隐藏（索引保留）"></td>
-        <td><button class="btn danger" onclick="delFolder(${f.id},${f.images})">删除</button></td>
+        <td style="text-align:center">${f.enabled
+            ? `<button class="btn" style="color:#67c894;border-color:#2b4a3b" onclick="toggleFolder(${f.id},false)" title="该目录照片当前出现在搜索结果中；点击改为排除">纳入中</button>`
+            : `<button class="btn" style="color:#8a8a94" onclick="toggleFolder(${f.id},true)" title="该目录照片当前已从搜索结果排除；点击改为纳入">已排除</button>`}</td>
+        <td><button class="btn danger" onclick="delFolder(${f.id},${f.images})">删除索引</button></td>
       </tr>`).join("")
       || '<tr><td colspan="7" style="color:var(--dim)">尚未添加任何目录——在下方输入路径点「添加」，即自动开始索引</td></tr>';
     bindDrag(tb);
