@@ -73,6 +73,8 @@ class Pipeline:
         self.clip_manager = None          # P3 注入 ClipManager
         self._backlog_skip: set[int] = set()
         self.next_scan_ts = time.time() + config.SCAN_INTERVAL_HOURS * 3600
+        self._last_busy_ts = time.monotonic()
+        self._idle_unloaded = False
         self._pool: ThreadPoolExecutor | None = None
         self._t: threading.Thread | None = None
 
@@ -108,11 +110,34 @@ class Pipeline:
                     did = True
                 if self._gpu_step() > 0:
                     did = True
-                if not did:
+                if did:
+                    self._last_busy_ts = time.monotonic()
+                    self._idle_unloaded = False
+                else:
+                    self._maybe_idle_unload()
                     self.stop_evt.wait(1.0)
             except Exception:  # noqa: BLE001 - 流水线永不因单次异常退出
                 log.exception("pipeline loop error")
                 self.stop_evt.wait(5.0)
+
+    def _maybe_idle_unload(self) -> None:
+        """空闲超时释放大块内存（OCR 会话 + 向量常驻矩阵）。
+
+        落盘文件不受影响：查询自动走冷路径，新写入照常落盘，
+        下次激活模型时 preload 恢复常驻。
+        """
+        if not config.IDLE_UNLOAD_SECONDS or self._idle_unloaded:
+            return
+        idle = time.monotonic() - self._last_busy_ts
+        if idle < config.IDLE_UNLOAD_SECONDS:
+            return
+        from imgseek import vectors as vec_mod
+        self.ocr_engine.unload()
+        for f in list(vec_mod._files.values()):
+            f.drop_resident()
+        self._idle_unloaded = True
+        log.info("idle %.0fs: unloaded ocr engine and resident vectors",
+                 idle)
 
     def _scan_due(self) -> bool:
         if self.scan_req.is_set():

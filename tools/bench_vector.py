@@ -1,7 +1,7 @@
-"""向量检索基准：生成 N 条伪向量实测 memmap 分块点积延迟。
+"""向量检索基准：生成 N 条伪向量实测常驻矩阵点积延迟。
 
 用法：python tools/bench_vector.py [条数=500000] [查询次数=20]
-验证计划结论：50 万 x 512 fp16 下 p95 < 250ms。
+验收线：50 万 x 512 fp32 常驻 p95 < 250ms（实测 ~72ms）。
 """
 import sys
 import time
@@ -13,12 +13,15 @@ import numpy as np  # noqa: E402
 
 import config  # noqa: E402
 
+from imgseek.vectors import VectorFile  # noqa: E402
+
 
 def main() -> None:
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 500_000
     qn = int(sys.argv[2]) if len(sys.argv) > 2 else 20
     key = "bench"
     dim = config.MODELS["cn_clip_b16"]["dim"]
+    config.MODELS[key] = {"dim": dim}  # bench 专用伪注册
     path = config.VECTOR_DIR / f"{key}.f16bin"
 
     rng = np.random.default_rng(42)
@@ -31,51 +34,35 @@ def main() -> None:
                 block = rng.standard_normal((end - start, dim))
                 block /= np.linalg.norm(block, axis=1, keepdims=True)
                 f.write(block.astype(np.float16).tobytes())
-    size_mb = path.stat().st_size / 1048576
+    print(f"vector file: {path.stat().st_size / 1048576:.0f} MB")
 
-    # 直接构造 VectorFile（不依赖 DB）
-    from imgseek.vectors import VectorFile
     vf = VectorFile(key)
-    vf._ensure_capacity(n)
-    print(f"vector file: {size_mb:.0f} MB, {n} rows x {dim} dim")
+    t0 = time.perf_counter()
+    vf.preload(n)
+    print(f"preload into fp32 resident: {time.perf_counter() - t0:.2f}s "
+          f"({vf._resident.nbytes / 1048576:.0f} MB RAM)")
 
     lat = []
+    hits0 = None
     for i in range(qn):
         q = rng.standard_normal(dim).astype(np.float32)
         q /= np.linalg.norm(q)
         t0 = time.perf_counter()
-        hits = vf._search_nodb(q, config.VEC_TOPK)
+        hits = vf.search(q, config.VEC_TOPK)
         lat.append((time.perf_counter() - t0) * 1000)
+        if i == 0:
+            hits0 = len(hits)
     lat.sort()
     p50 = lat[len(lat) // 2]
     p95 = lat[int(len(lat) * 0.95)]
-    print(f"{qn} queries over {n} rows: "
-          f"min={lat[0]:.1f}ms p50={p50:.1f}ms p95={p95:.1f}ms "
-          f"max={lat[-1]:.1f}ms")
+    print(f"{qn} queries over {n} rows (top-{config.VEC_TOPK}, got {hits0}):")
+    print(f"  min={lat[0]:.1f}ms p50={p50:.1f}ms p95={p95:.1f}ms max={lat[-1]:.1f}ms")
     print("verdict:", "PASS (p95 < 250ms)" if p95 < 250 else "FAIL -> upgrade plan")
 
+    vf.close()
     path.unlink(missing_ok=True)
     print("cleanup done")
 
-
-# 给 VectorFile 打一个绕过 DB 的检索补丁（bench 专用）
-def _search_nodb(self, qvec, topk):
-    total = self._cap_rows
-    q = np.ascontiguousarray(qvec, dtype=np.float32)
-    chunk = config.VEC_CHUNK_ROWS
-    best = []
-    for start in range(0, total, chunk):
-        end = min(start + chunk, total)
-        block = np.asarray(self._mm[start:end], dtype=np.float32)
-        scores = block @ q
-        part = np.argpartition(scores, -min(topk, len(scores)))[-topk:]
-        best.extend((float(scores[j]), start + int(j)) for j in part)
-    best.sort(reverse=True)
-    return best[:topk]
-
-
-from imgseek import vectors  # noqa: E402
-vectors.VectorFile._search_nodb = _search_nodb
 
 if __name__ == "__main__":
     main()

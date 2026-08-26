@@ -169,12 +169,15 @@ async function pollStatus(){
   try{
     const d=await(await fetch("/api/status")).json();
     let t=`索引: ${d.images_total} 张`;
-    const pend=d.pending.thumb+d.pending.ocr+
-      Object.values(d.models.map?{}:{}).length;
     const ep=d.models.reduce((s,m)=>s+(m.pending_embed||0),0);
     const left=d.pending.thumb+d.pending.ocr+ep;
     if(left>0)t+=` · 待处理 ${left} (${d.rate_per_sec} 张/s${d.scanning?" · 扫描中":""})`;
     else t+=" · 就绪";
+    const bk=(d.failed?.thumb||0)+(d.failed?.ocr||0);
+    if(bk>0)t+=` · 失败 ${bk}`;
+    if(d.ocr_backend&&d.ocr_backend!=="unloaded")t+=` · OCR:${d.ocr_backend.toUpperCase()}`;
+    const am=d.models.find(m=>m.key===d.active_model);
+    if(am&&am.session==="loading")t+=" · 模型加载中…";
     $("#idx").textContent=t;
   }catch(e){}
 }

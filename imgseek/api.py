@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 import config
-from imgseek import db, downloader, pipeline as pl, search, thumbs
+from imgseek import db, downloader, pipeline as pl, search, thumbs, vectors
 from imgseek.clip_models import MANAGER
 
 log = logging.getLogger("api")
@@ -23,12 +23,16 @@ _pipeline = pl.Pipeline()
 
 
 def _load_model_async(key: str) -> None:
-    """后台完成 权重下载 -> 会话加载 -> 流水线开启嵌入。"""
+    """后台完成 权重下载 -> 会话加载 -> 向量常驻 -> 流水线开启嵌入。"""
     MANAGER.set_state(key, "loading")
     try:
         downloader.ensure_model(key)
         MANAGER.activate(key)
         MANAGER.ensure_session(key)
+        # 已有向量读入常驻矩阵（新索引实时双写）
+        n = int(db.get_setting(f"next_slot_{key}", "0"))
+        if n > 0:
+            vectors.preload_model(key, n)
         _pipeline.clip_manager = MANAGER
         _pipeline.clip_enabled = True
         log.info("model %s activated", key)
@@ -85,6 +89,12 @@ def create_app() -> FastAPI:
             ).fetchall()
         }
         active = db.get_setting("active_model", config.DEFAULT_MODEL)
+        failed = {
+            "thumb": conn.execute(
+                "SELECT COUNT(*) c FROM image WHERE thumb_status=2").fetchone()["c"],
+            "ocr": conn.execute(
+                "SELECT COUNT(*) c FROM image WHERE ocr_status=2").fetchone()["c"],
+        }
         return {
             "active_model": active,
             "models": [
@@ -96,6 +106,8 @@ def create_app() -> FastAPI:
             ],
             "images_total": total,
             "pending": {"thumb": pend_thumb, "ocr": pend_ocr},
+            "failed": failed,
+            "ocr_backend": _pipeline.ocr_engine.backend,
             "scanning": _pipeline.scanning,
             "rate_per_sec": round(_pipeline.rate.rate(), 1),
         }
@@ -135,6 +147,37 @@ def create_app() -> FastAPI:
     @app.post("/api/scan/start")
     def scan_start():
         _pipeline.request_scan()
+        return {"ok": True}
+
+    # ---------- 失败重跑 / 资源释放 ----------
+    class RetryIn(BaseModel):
+        stage: str  # thumb | ocr | embed
+
+    @app.post("/api/retry")
+    def retry(body: RetryIn):
+        col = {"thumb": "thumb_status", "ocr": "ocr_status"}.get(body.stage)
+        conn = db.get_conn()
+        if col:
+            n = conn.execute(
+                f"UPDATE image SET {col}=0 WHERE {col}=2 AND dead=0"
+            ).rowcount
+            conn.commit()
+            return {"ok": True, "reset": n}
+        if body.stage == "embed":
+            if not MANAGER.session_ready():
+                raise HTTPException(400, "no active model session")
+            key = MANAGER.active_key
+            n = conn.execute(
+                "UPDATE embed_status SET status=0 "
+                "WHERE status=2 AND model_key=?", (key,)).rowcount
+            conn.commit()
+            return {"ok": True, "reset": n}
+        raise HTTPException(400, "unknown stage")
+
+    @app.post("/api/unload")
+    def unload():
+        _pipeline.ocr_engine.unload()
+        vectors.close_all()  # 释放常驻矩阵与句柄；查询自动走冷路径
         return {"ok": True}
 
     # ---------- 模型切换（P3 接管会话加载，当前持久化选择） ----------

@@ -35,8 +35,10 @@ QUEUE_MAXSIZE = 64          # CPU -> GPU 队列上限（控制内存）
 SEARCH_LIMIT = 500          # 返回结果上限（Everything 式截断提示）
 FTS_LIMIT = 500
 VEC_TOPK = 500
-VEC_CHUNK_ROWS = 65536      # 向量 memmap 分块点积的块行数
+VEC_CHUNK_ROWS = 65536      # 冷路径 memmap 分块行数
 RRF_K = 60                  # Reciprocal Rank Fusion 常数
+RESIDENT_VECTORS = True     # 向量 fp32 常驻内存（50 万条约 1GB/模型；
+                            # 实测 p50 72ms vs 冷路径 ~2s，见 vectors.py）
 
 # ---------- 维护 ----------
 IDLE_UNLOAD_SECONDS = 1800  # 空闲多久后卸载模型会话（P4）

@@ -75,7 +75,7 @@ def _vector_rows(conn, q: str, model_key: str):
     qvec = cm.MANAGER.encode_query(q, model_key)
     if qvec is None:
         return [], False
-    hits = vectors.get_file(model_key).search(conn, qvec)
+    hits = vectors.get_file(model_key).search(qvec)
     if not hits:
         return [], False
     slot_score = dict(hits)

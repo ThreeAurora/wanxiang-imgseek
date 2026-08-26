@@ -33,6 +33,31 @@ def register_cuda_dll_dirs() -> int:
     return n
 
 
+def _cuda_really_works() -> bool:
+    """实测 CUDA EP 是否可用（RapidOCR 失败时会静默回退 CPU，
+    不能靠"构造没抛异常"来判断，必须看 session.get_providers()）。"""
+    try:
+        import onnxruntime as ort
+        import rapidocr_onnxruntime
+        models = (Path(rapidocr_onnxruntime.__file__).parent / "models")
+        det = next(models.glob("*det*.onnx"), None)
+        if det is None:
+            return False
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        sess = ort.InferenceSession(str(det), sess_options=so,
+                                    providers=["CUDAExecutionProvider",
+                                               "CPUExecutionProvider"])
+        ok = sess.get_providers()[0] == "CUDAExecutionProvider"
+        if not ok:
+            log.warning("CUDA EP probe: falls back to %s",
+                        sess.get_providers())
+        return ok
+    except Exception as e:  # noqa: BLE001 - 探测失败一律按无 CUDA
+        log.warning("CUDA EP probe failed: %s", str(e)[:150])
+        return False
+
+
 class OcrEngine:
     def __init__(self) -> None:
         self._engine = None
@@ -58,17 +83,16 @@ class OcrEngine:
             if self._engine is not None:
                 return self._engine
             register_cuda_dll_dirs()
-            try:
+            if _cuda_really_works():
                 eng = self._create(use_cuda=True)
                 self._probe(eng)
                 self.backend = "cuda"
                 log.info("OCR backend: CUDA")
-            except Exception as e:  # noqa: BLE001 - 回退属正常路径
-                log.warning("OCR CUDA init failed (%s), fallback to CPU",
-                            str(e)[:200])
+            else:
                 eng = self._create(use_cuda=False)
                 self._probe(eng)
                 self.backend = "cpu"
+                log.info("OCR backend: CPU")
             self._engine = eng
             return eng
 

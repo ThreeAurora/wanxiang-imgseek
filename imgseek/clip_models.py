@@ -205,7 +205,7 @@ class ClipManager:
                 (key, it.image_id)).fetchone()
             slot = row["slot"] if row else (
                 next_slot_fn or db.next_slot)(key)
-            vf.write(conn, slot, vec)
+            vf.write(slot, vec)
             if row is None:
                 conn.execute(
                     "INSERT INTO vector_slot(model_key, image_id, slot) "
