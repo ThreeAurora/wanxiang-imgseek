@@ -71,6 +71,7 @@ class Pipeline:
         self.clip_enabled = False
         self.ocr_engine = ocr_mod.OcrEngine()
         self.clip_manager = None          # P3 注入 ClipManager
+        self._backlog_skip: set[int] = set()
         self.next_scan_ts = time.time() + config.SCAN_INTERVAL_HOURS * 3600
         self._pool: ThreadPoolExecutor | None = None
         self._t: threading.Thread | None = None
@@ -217,31 +218,39 @@ class Pipeline:
             self._process_item(item)
             processed += 1
             self.rate.mark()
-            if processed % 32 == 0:
-                if self.clip_manager is not None:
-                    self.clip_manager.flush(db.next_slot)
-                db.get_conn().commit()
+            db.get_conn().commit()
         if processed:
             if self.clip_manager is not None:
                 self.clip_manager.flush(db.next_slot)
+            self._backlog_skip.clear()  # flush 后状态已更新，允许重新扫描
             db.get_conn().commit()
         return processed
 
     def _take_backlog(self) -> Item | None:
-        """补捞存量：缩略图已完成但 OCR/嵌入仍待处理的行。"""
+        """补捞存量：缩略图已完成但 OCR/嵌入仍待处理的行。
+
+        关键：攒批 flush 之前 embed_status 仍为 0，同一行会被反复查出，
+        用 _backlog_skip 保证「在飞」的行不重复进入处理。
+        """
+        if len(self._backlog_skip) > 4096:
+            self._backlog_skip.clear()
         cond_extra = ""
-        params: list = []
         if self.clip_enabled:
             cond_extra = (" OR EXISTS(SELECT 1 FROM embed_status e "
                           "WHERE e.image_id=i.id AND e.status=0)")
         rows = db.get_conn().execute(
-            f"SELECT id, path, size, content_hash FROM image i "
+            f"SELECT id, path, size, content_hash, ocr_status FROM image i "
             f"WHERE thumb_status=1 AND ocr_status=0{cond_extra} "
-            f"AND dead=0 ORDER BY id LIMIT 16", params).fetchall()
+            f"AND dead=0 ORDER BY id LIMIT 64").fetchall()
         for row in rows:
+            iid = row["id"]
+            if iid in self._backlog_skip:
+                continue
             item = self._decode_for_gpu(dict(row))
-            if item is not None:
-                return item
+            if item is None:
+                continue
+            self._backlog_skip.add(iid)
+            return item
         return None
 
     def _decode_for_gpu(self, row: dict) -> Item | None:
@@ -251,7 +260,9 @@ class Pipeline:
                 data = fh.read()
             h = row["content_hash"] or hashlib.sha1(data).hexdigest()
             img = decoder.load_rgb(data)
-            need_ocr = row["size"] >= config.OCR_SKIP_MIN_BYTES
+            # 已完成 OCR 的 backlog 图只需补嵌入
+            need_ocr = (row["ocr_status"] == 0
+                        and row["size"] >= config.OCR_SKIP_MIN_BYTES)
             _, clip, ocr_img = decoder.derive(img, self.clip_enabled,
                                               need_ocr)
             return Item(row["id"], h, clip, ocr_img)

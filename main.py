@@ -35,6 +35,12 @@ def main() -> None:
     setup_logging(args.verbose)
     log = logging.getLogger("main")
 
+    # 尽早注册 pip 版 CUDA13/cuDNN9 DLL，CLIP 与 OCR 的 CUDA EP 都受益
+    from imgseek.ocr import register_cuda_dll_dirs
+    n = register_cuda_dll_dirs()
+    if n:
+        log.info("registered %d CUDA dll dirs", n)
+
     db.init_db()
     log.info("starting imgseek at http://%s:%d", config.HOST, args.port)
 
