@@ -282,6 +282,6 @@ class Pipeline:
             conn.execute(
                 "UPDATE image SET ocr_status=1 WHERE id=? AND ocr_status=0",
                 (item.image_id,))
-        # ---- CLIP 嵌入（P3） ----
+        # ---- CLIP 嵌入 ----
         if self.clip_manager is not None:
-            self.clip_manager.embed_item(conn, item, db.next_slot)
+            self.clip_manager.embed_item(item, db.next_slot)
