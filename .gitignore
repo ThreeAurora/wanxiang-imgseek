@@ -1,4 +1,5 @@
-data/
 __pycache__/
 *.pyc
 logs/
+data/models/
+data/index.db*
