@@ -131,9 +131,10 @@ footer{display:flex; justify-content:space-between; padding:5px 10px;
   <div class="panel">
     <h3>流水线控制</h3>
     <div style="display:flex; gap:8px; margin-bottom:10px;">
-      <button class="btn warn" id="btnPause">⏸ 暂停索引</button>
+      <button class="btn warn" id="btnPause">⏸ 暂停全部索引</button>
       <button class="btn" id="btnRescan">重新扫描目录变更</button>
       <button class="btn" id="btnRetryOcr">重试失败项 (OCR)</button>
+      <button class="btn" id="btnOpenData" title="index.db / 缩略图 / 向量 / 模型权重都在这里">📂 打开数据文件夹</button>
       <button class="btn danger" id="btnUnload">释放模型与常驻内存</button>
     </div>
     <div class="stage"><span class="lb">缩略图 / 解码</span><div class="bar"><i id="barThumb"></i></div><span class="num" id="numThumb"></span></div>
@@ -148,12 +149,12 @@ footer{display:flex; justify-content:space-between; padding:5px 10px;
   </div>
 
   <div class="panel">
-    <h3>监视目录（拖动行可调整顺序；关闭开关后该目录内容不再出现在搜索结果）</h3>
-    <table><thead><tr><th style="width:28px"></th><th>路径</th><th style="width:80px">共几张</th><th style="width:210px">已处理 / 待处理</th><th style="width:56px">启用</th><th style="width:80px">操作</th></tr></thead>
+    <h3>监视目录（拖动 ⠿ 排序；「结果」开关决定该目录是否出现在搜索结果；「索引」按钮暂停/继续该目录的后台处理）</h3>
+    <table><thead><tr><th style="width:28px"></th><th>路径</th><th style="width:76px">共几张</th><th style="width:200px">已处理</th><th style="width:96px">索引</th><th style="width:70px">结果</th><th style="width:76px">操作</th></tr></thead>
     <tbody id="folderRows"></tbody></table>
     <div class="addrow">
-      <input id="newFolder" placeholder="输入新的监视目录绝对路径，如 G:\Photos">
-      <button class="btn" id="btnAddFolder">+ 添加目录并扫描</button>
+      <input id="newFolder" placeholder="输入新的监视目录绝对路径，如 G:\Photos（可添加多个，一行一个自动排队索引）">
+      <button class="btn" id="btnAddFolder">+ 添加目录并开始索引</button>
     </div>
   </div>
 
@@ -318,19 +319,24 @@ function renderPanels(d){
   function left(){const e=d.models.reduce((s,m)=>s+(m.pending_embed||0),0);return d.pending.thumb+d.pending.ocr+e;}
   $("#kvState").textContent=d.paused?"⏸ 已暂停":(d.scanning?"扫描中":(left()>0?"处理中":"就绪"));
   $("#btnPause").textContent=d.paused?"▶ 继续索引":"⏸ 暂停索引";
-  /* 目录表：一条一行 + 拖动排序 + 启用开关 */
+  /* 目录表：一条一行 + 行内三控（索引启停/结果纳排/删除）+ 拖动排序 */
   fetch("/api/folders").then(r=>r.json()).then(fd=>{
     const tb=$("#folderRows");
     tb.innerHTML=fd.folders.map(f=>`
-      <tr draggable="true" data-id="${f.id}" style="${f.enabled?'':'opacity:.45'}">
+      <tr draggable="true" data-id="${f.id}" style="${f.enabled?'':'opacity:.5'}">
         <td class="drag" title="拖动排序">⠿</td>
-        <td title="${f.path}" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.path}</td>
+        <td title="${f.path}" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.path}</td>
         <td>${f.images}</td>
         <td>${f.processed} / ${f.images}${f.pending?`  <span class="pill pend">${f.pending} 待处理</span>`:'  <span class="pill ok">完成</span>'}</td>
-        <td><input type="checkbox" ${f.enabled?"checked":""} onchange="toggleFolder(${f.id},this.checked)" title="关闭后搜索结果不含该目录"></td>
+        <td>${f.pending
+            ? (f.paused
+               ? `<button class="btn" onclick="pauseFolder(${f.id},false)">▶ 继续</button>`
+               : `<button class="btn warn" onclick="pauseFolder(${f.id},true)">⏸ 暂停</button>`)
+            : '<span class="pill ok">—</span>'}</td>
+        <td style="text-align:center"><input type="checkbox" ${f.enabled?"checked":""} onchange="toggleFolder(${f.id},this.checked)" title="勾选 = 该目录内容纳入搜索结果；取消 = 从搜索结果隐藏（索引保留）"></td>
         <td><button class="btn danger" onclick="delFolder(${f.id},${f.images})">删除</button></td>
       </tr>`).join("")
-      || '<tr><td colspan="6" style="color:var(--dim)">尚未添加任何目录——在下方输入路径添加</td></tr>';
+      || '<tr><td colspan="7" style="color:var(--dim)">尚未添加任何目录——在下方输入路径点「添加」，即自动开始索引</td></tr>';
     bindDrag(tb);
   });
   /* 模型列表 */
@@ -346,6 +352,13 @@ window.toggleFolder=async(id,en)=>{
   await postJSON(`/api/folders/${id}/toggle`,{enabled:en});
   setTimeout(renderManage,300);
 };
+window.pauseFolder=async(id,on)=>{
+  await postJSON(`/api/folders/${id}/pause`,{on});
+  setTimeout(renderManage,300);
+};
+$("#btnOpenData").addEventListener("click",async()=>{
+  await fetch("/api/open-data",{method:"POST"});
+});
 window.delFolder=async(id,n)=>{
   if(!confirm(`确定删除这条路径吗？\n\n将从索引中移除该目录 ${n} 张图片的全部数据\n（缩略图、OCR 文字、语义向量），\n磁盘上的原照片不受影响。\n如需恢复须重新添加并等待重建索引。`))return;
   await fetch("/api/folders/"+id,{method:"DELETE"});

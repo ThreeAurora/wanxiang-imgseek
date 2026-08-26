@@ -122,7 +122,7 @@ def create_app() -> FastAPI:
     @app.get("/api/folders")
     def list_folders():
         rows = db.get_conn().execute("""
-            SELECT f.id, f.path, f.enabled, f.sort_order,
+            SELECT f.id, f.path, f.enabled, f.paused, f.sort_order,
                    COUNT(i.id) AS images,
                    COALESCE(SUM(CASE WHEN i.thumb_status=1 AND i.dead=0
                                THEN 1 ELSE 0 END),0) AS processed,
@@ -143,6 +143,24 @@ def create_app() -> FastAPI:
         conn.execute("UPDATE folder SET enabled=? WHERE id=?",
                      (1 if body.enabled else 0, folder_id))
         conn.commit()
+        return {"ok": True}
+
+    class PauseIn(BaseModel):
+        on: bool
+
+    @app.post("/api/folders/{folder_id}/pause")
+    def pause_folder(folder_id: int, body: PauseIn):
+        """单目录暂停/继续索引处理（不影响是否纳入搜索结果）。"""
+        conn = db.get_conn()
+        conn.execute("UPDATE folder SET paused=? WHERE id=?",
+                     (1 if body.on else 0, folder_id))
+        conn.commit()
+        return {"ok": True}
+
+    @app.post("/api/open-data")
+    def open_data_folder():
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(config.DATA_DIR))  # noqa: S606 - 本机单用户工具
         return {"ok": True}
 
     class ReorderIn(BaseModel):

@@ -168,8 +168,9 @@ class Pipeline:
     # ---------- 缩略图阶段（CPU 池） ----------
     def _pending_thumb(self, limit: int):
         return db.get_conn().execute(
-            "SELECT id, path, size, content_hash FROM image "
-            "WHERE thumb_status=0 AND dead=0 ORDER BY id LIMIT ?",
+            "SELECT i.id, i.path, i.size, i.content_hash FROM image i "
+            "JOIN folder f ON f.id = i.folder_id AND f.paused = 0 "
+            "WHERE i.thumb_status=0 AND i.dead=0 ORDER BY i.id LIMIT ?",
             (limit,),
         ).fetchall()
 
@@ -268,9 +269,11 @@ class Pipeline:
             cond_extra = (" OR EXISTS(SELECT 1 FROM embed_status e "
                           "WHERE e.image_id=i.id AND e.status=0)")
         rows = db.get_conn().execute(
-            f"SELECT id, path, size, content_hash, ocr_status FROM image i "
+            f"SELECT i.id, i.path, i.size, i.content_hash, i.ocr_status "
+            f"FROM image i JOIN folder f ON f.id = i.folder_id "
+            f"AND f.paused = 0 "
             f"WHERE thumb_status=1 AND ocr_status=0{cond_extra} "
-            f"AND dead=0 ORDER BY id LIMIT 64").fetchall()
+            f"AND i.dead=0 ORDER BY i.id LIMIT 64").fetchall()
         for row in rows:
             iid = row["id"]
             if iid in self._backlog_skip:

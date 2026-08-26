@@ -116,11 +116,14 @@ def init_db() -> None:
     config.ensure_dirs()
     conn = get_conn()
     conn.executescript(SCHEMA)
-    # 轻量迁移：folder.sort_order（拖动排序用）
+    # 轻量迁移：folder.sort_order（拖动排序）、folder.paused（单目录暂停）
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(folder)")}
     if "sort_order" not in cols:
         conn.execute(
             "ALTER TABLE folder ADD COLUMN sort_order INTEGER DEFAULT 0")
+    if "paused" not in cols:
+        conn.execute(
+            "ALTER TABLE folder ADD COLUMN paused INTEGER DEFAULT 0")
     # 默认设置
     conn.execute(
         "INSERT OR IGNORE INTO settings(key, value) VALUES('active_model', ?)",
