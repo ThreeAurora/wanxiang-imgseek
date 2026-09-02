@@ -1,5 +1,7 @@
 # 万象图搜 (imgseek)
 
+[English](./README.en-US.md) | 中文
+
 本地超轻量图片语义检索服务 —— Everything 的图片版：**一个搜索框，同时搜文件名、图片内文字（OCR）、画面内容（自然语言语义）**。
 
 - 免 Docker，`python main.py` 即起即停；零侵入，不复制不移动你的照片，删掉 `data/` 即完全卸载
