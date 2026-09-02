@@ -58,8 +58,8 @@ GET  /api/status                    进度 / 速率 / 后端状态
 
 ## 模型权重与数据说明
 
-- 模型权重不随仓库分发：首次激活模型时按 `config.py` 注册表从 HuggingFace 自动下载到 `data/models/`（约 650MB/模型）。网络走本地代理 `127.0.0.1:7890` 直连 huggingface.co（hf-mirror 对大文件会 308 回源导致失败）；已有代理环境变量时不覆盖。
-- `data/index.db*`（索引库）、`data/thumbs/`（缩略图缓存）为运行期生成，不入库；`data/vectors/` 下的 fp16 向量文件随仓库备份（重算代价高）。
+- 模型权重随仓库以 ≤90MB 分片分发（GitHub 单文件 100MB 硬限），克隆后按 `data/models/REBUILD_MODELS.md` 重组即可；从 HuggingFace 重新下载的路径仍保留：首次激活模型时按 `config.py` 注册表自动下载到 `data/models/`（约 650MB/模型），网络走本地代理 `127.0.0.1:7890` 直连 huggingface.co（hf-mirror 对大文件会 308 回源导致失败）；已有代理环境变量时不覆盖。
+- `data/index.db*`（索引库快照）、`data/thumbs/`（缩略图缓存）与 `data/vectors/`（fp16 向量，重算代价高）均随仓库备份；`index.db-wal/-shm` 为服务运行中的活动文件，入库的是提交时刻的快照。
 - 仓库中 `data/demo_report.html` 为开发期抽样演示报告样例，可随时删除。
 
 ## 已知边界

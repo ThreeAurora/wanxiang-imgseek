@@ -58,8 +58,8 @@ This project is the backend for the "search images with text" feature of [Gaze](
 
 ## Model Weights & Data Notes
 
-- Model weights are not distributed with the repository: the first time a model is activated it is auto-downloaded from HuggingFace into `data/models/` according to the `config.py` registry (about 650 MB per model). Downloads go through the local proxy `127.0.0.1:7890` straight to huggingface.co (hf-mirror 308-redirects large files back to the origin, which breaks them); if proxy environment variables are already set, they are left untouched.
-- `data/index.db*` (the index database) and `data/thumbs/` (thumbnail cache) are generated at runtime and not committed; the fp16 vector files under `data/vectors/` are backed up with the repository (recomputing them is expensive).
+- Model weights ship with the repository as ≤90 MB split parts (GitHub caps a single file at 100 MB); after cloning, reassemble them per `data/models/REBUILD_MODELS.md`. The HuggingFace download path is kept as a fallback: the first time a model is activated it can be auto-downloaded into `data/models/` per the `config.py` registry (about 650 MB per model), via the local proxy `127.0.0.1:7890` straight to huggingface.co (hf-mirror 308-redirects large files back to the origin, which breaks them); existing proxy environment variables are left untouched.
+- The `data/index.db*` index-database snapshot, `data/thumbs/` (thumbnail cache) and `data/vectors/` (fp16 vectors, expensive to recompute) are all backed up with the repository; `index.db-wal/-shm` are live files while the service runs — what gets committed is a snapshot taken at commit time.
 - `data/demo_report.html` in the repository is a sampled demo report left over from development; it can be deleted at any time.
 
 ## Known Limitations

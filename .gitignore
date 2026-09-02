@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
 logs/
-data/models/
-data/index.db*
+
+# 防丢补传 2026-09-02: data/ 全量入库;仅 3 个超 GitHub 100MB 单文件硬限的模型原始文件除外
+# 这 3 个权重以同目录 .part-NN 分片入库,重组方法见 data/models/REBUILD_MODELS.md
+data/models/cn_clip_b16/onnx/model_fp16.onnx
+data/models/clip_b32/onnx/vision_model_fp16.onnx
+data/models/clip_b32/onnx/text_model_fp16.onnx
